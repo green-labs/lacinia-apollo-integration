@@ -1,2 +1,2 @@
 # apollo-usage-report-clj
-Apollo Studio usage report sending library for clojure
+Apollo Studio usage report sending example for clojure
