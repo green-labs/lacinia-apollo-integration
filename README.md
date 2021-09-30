@@ -1,2 +1,3 @@
-# apollo-usage-report-clj
-Apollo Studio usage report sending example for clojure
+# lacinia-apollo-integration
+
+Apollo Studio usage report example for Lacinia.
