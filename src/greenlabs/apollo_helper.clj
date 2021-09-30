@@ -4,14 +4,13 @@
             [clj-http.client :as client]
             [clojure.data.json :as json]
             [clojure.walk :as walk]
-            [overtone.at-at :as at-at]
             [protobuf.core :as protobuf])
   (:import
    (java.time ZonedDateTime ZoneId)
    (greenlabs.protobuf Report)))
 
 (def ^:private apollo-studio-api-key (atom nil))
-(def ^:private pool (atom nil))
+(def ^:private thread (atom nil))
 (def ^:private tracings (atom []))
 
 (defn- ->protobuf-bytes
@@ -28,6 +27,12 @@
     (str "# " opration-name "\n" query)
     query))
 
+(defn- change-path
+  [path]
+  (map (fn [p]
+         (if (keyword? p) (name p) p))
+       path))
+
 (defn- transform-path
   [path]
   (walk/prewalk (fn [v]
@@ -39,7 +44,7 @@
                           others (apply dissoc v fields)
                           first-key (first (keys others))]
                       (cond
-                        (keyword? first-key) (assoc default :child (vals others))
+                        (string? first-key) (assoc default :child (vals others))
                         (int? first-key) (assoc default :child (map (fn [[k v]] {:index k :child (vals v)}) others))
                         :else v))
                     v))
@@ -48,11 +53,12 @@
 (defn- resolvers->trace-root
   [resolvers]
   (->> resolvers
-       (reduce (fn [m v] (assoc-in m (:path v) {:response-name (name (:field-name v))
-                                                :type (:return-type v)
-                                                :start-time (:start-offset v)
-                                                :end-time (+ (:start-offset v) (:duration v))
-                                                :parent-type (name (:parent-type v))}))
+       (reduce (fn [m v] (assoc-in m (change-path (:path v))
+                                   {:response-name (name (:field-name v))
+                                    :type (:return-type v)
+                                    :start-time (:start-offset v)
+                                    :end-time (+ (:start-offset v) (:duration v))
+                                    :parent-type (name (:parent-type v))}))
                {})
        transform-path))
 
@@ -68,11 +74,11 @@
 (defn- ex->trace-root
   [ex]
   (let [info (ex-data ex)
-        error {:message (.getMessage ex)
-               :location (:location info)
-               :json (json/write-str (or (:arguments info) ""))}]
-    (->> (assoc-in {} (:path info) {:response-name (name (:field-name info))
-                                    :error         [error]})
+        error {:response-name (name (:field-name info))
+               :error         [{:message (.getMessage ex)
+                                :location (:location info)
+                                :json (json/write-str (or (:arguments info) ""))}]}]
+    (->> (assoc-in {} (change-path (:path info)) error)
          transform-path)))
 
 (defn- exception->trace
@@ -143,9 +149,7 @@
 
 (defn enable
   [api-key]
-  (reset! apollo-studio-api-key api-key)
-  (when-not @pool
-    (reset! pool (at-at/mk-pool))))
+  (reset! apollo-studio-api-key api-key))
 
 (defn enabled?
   []
@@ -154,12 +158,18 @@
 (defn start
   []
   (when (enabled?)
-    (at-at/every 20000 send-tracings! @pool :initial-delay 1000)))
+    (reset! thread (Thread.
+                     (fn []
+                       (while true
+                         (send-tracings!)
+                         (Thread/sleep 20000)))))
+    (.start @thread)))
 
 (defn stop
   []
-  (when @pool
-    (at-at/stop-and-reset-pool! @pool :strategy :kill)
+  (when @thread
+    (.stop @thread)
+    (reset! thread nil)
     ;; 남아있는 데이터가 있으면 마저 전송하도록 호출 함
     (send-tracings!)))
 
