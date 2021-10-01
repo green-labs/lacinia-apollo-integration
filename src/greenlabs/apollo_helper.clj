@@ -3,6 +3,7 @@
             [camel-snake-kebab.extras :as cske]
             [clj-http.client :as client]
             [clojure.data.json :as json]
+            [clojure.string :as s]
             [clojure.walk :as walk]
             [protobuf.core :as protobuf])
   (:import
@@ -23,9 +24,19 @@
 
 (defn- make-query
   [query options]
-  (if-let [opration-name (:operation-name options)]
-    (str "# " opration-name "\n" query)
-    query))
+  (if-let [operation-name (:operation-name options)]
+    (str "# " operation-name "\n" query)
+    (let [query (s/trim query)
+          [_ first-resolver-name] (re-find #"(?m)([a-zA-Z0-9_-]+)\(" query)
+          first-resolver-name (s/trim first-resolver-name)]
+      (str "# " first-resolver-name "\n"
+           (cond
+             (re-find #"^mutation" query)
+             (s/replace query #"^mutation" (str "mutation " first-resolver-name))
+             (re-find #"^query" query)
+             (s/replace query #"^query" (str "query " first-resolver-name))
+             :else
+             (str "query " first-resolver-name query))))))
 
 (defn- change-path
   [path]
