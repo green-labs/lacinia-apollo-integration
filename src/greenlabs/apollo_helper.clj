@@ -26,7 +26,8 @@
   [query options]
   (if-let [operation-name (:operation-name options)]
     (str "# " operation-name "\n" query)
-    (let [query (s/trim query)
+    (let [query (-> (s/trim query)
+                    (s/replace #": ([^,)]*)([,)]*)" ": \"\"$2"))
           [_ first-resolver-name] (re-find #"(?m)([a-zA-Z0-9_-]+)\(" query)
           first-resolver-name (s/trim first-resolver-name)]
       (str "# " first-resolver-name "\n"
